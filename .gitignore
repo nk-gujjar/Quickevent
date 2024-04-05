@@ -1,0 +1,20 @@
+#ignore jupyter notebook
+.ipynb_checkpoints/
+Untitled.ipynb
+
+#ignore DS_Store
+.DS_Store
+
+#ignore envs
+.venv/
+myenv/
+
+# ignore credentials
+credentials.json
+
+#ignore token
+token.json
+
+#ignore Authentication
+Authentication.py
+
