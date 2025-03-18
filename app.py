@@ -11,6 +11,18 @@ from llm_utils import query_groq, extract_json_from_text
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Now attempt to import the required modules
+try:
+    from calendar_utils import get_calendar_service, create_calendar_event, list_upcoming_events
+    from llm_utils import query_groq, extract_json_from_text
+    from datetime import datetime, timedelta
+    import pytz
+except ImportError as e:
+    st.error(f"Failed to import required modules: {str(e)}")
+    st.error("Please make sure all dependencies are installed. You may need to restart the app.")
+    logger.error(f"Import error: {str(e)}")
+    st.stop()
+
 def main():
     st.title('Calendar Event Scheduler')
     st.subheader('Chat with me to schedule your events')
