@@ -1,13 +1,9 @@
 #ignore jupyter notebook
-.ipynb_checkpoints/
-Untitled.ipynb
+__pycache__/
 
 #ignore DS_Store
 .DS_Store
 
-#ignore envs
-.venv/
-myenv/
 
 # ignore credentials
 credentials.json
@@ -15,6 +11,7 @@ credentials.json
 #ignore token
 token.json
 
-#ignore Authentication
-Authentication.py
+#ignore api keys
+api_keys.py
+
 
