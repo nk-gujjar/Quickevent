@@ -38,33 +38,7 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 DEFAULT_TIMEZONE = "Asia/Kolkata"  # Indian Standard Time (IST)
 DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
 
-# def get_credentials():
-#     """Handles Google Calendar API credentials securely with improved error handling."""
-#     creds = None
 
-#     if os.path.exists("token.json"):
-#         try:
-#             creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-#         except Exception as e:
-#             logging.warning(f"❗ Corrupted token.json file detected: {str(e)}. Deleting and re-authenticating...")
-#             os.remove("token.json")  # Delete the corrupted token file
-
-#     if not creds or not creds.valid:
-#         if creds and creds.expired and creds.refresh_token:
-#             try:
-#                 creds.refresh(Request())
-#             except Exception as e:
-#                 logging.warning(f"❗ Token refresh failed: {str(e)}. Re-authenticating from scratch...")
-#                 if os.path.exists("token.json"):
-#                     os.remove("token.json")  # Delete the corrupted token file
-#                 return get_credentials()  # Restart credential fetching
-#         else:
-#             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-#             creds = flow.run_local_server(port=0)
-#         with open("token.json", "w") as token:
-#             token.write(creds.to_json())
-
-#     return creds
 def get_credentials():
     """
     Gets valid credentials for the Google Calendar API.
