@@ -52,9 +52,78 @@ def main():
         with st.chat_message(role):
             st.write(content)
     
+    # Handle confirmation of pending event (if exists)
+    if 'pending_event' in st.session_state:
+        event_json = st.session_state['pending_event']
+        
+        event_details = f"""
+        📌 **Title:** {event_json.get('summary')}
+        🕒 **When:** {event_json.get('start', {}).get('dateTime')} to {event_json.get('end', {}).get('dateTime')}
+        📍 **Where:** {event_json.get('location', 'No location specified')}
+        📝 **Description:** {event_json.get('description', 'No description')}
+        """
+        
+        if 'attendees' in event_json:
+            attendees_list = ", ".join([attendee.get('email') for attendee in event_json.get('attendees', [])])
+            event_details += f"\n👥 **Attendees:** {attendees_list}"
+        
+        st.subheader("Please confirm the event details:")
+        st.write(event_details)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Yes, Schedule It"):
+                with st.spinner("Creating event..."):
+                    result = create_calendar_event(calendar_service, event_json)
+                    
+                    if result.get("success"):
+                        success_message = f"""
+                        ✅ Event created successfully!
+                        
+                        📌 Title: {event_json.get('summary')}
+                        🕒 When: {event_json.get('start', {}).get('dateTime')} to {event_json.get('end', {}).get('dateTime')}
+                        📍 Where: {event_json.get('location', 'No location specified')}
+                        🔗 Calendar Link: {result.get('link')}
+                        """
+                        
+                        # Add assistant response to chat history
+                        st.session_state['messages'].append({"role": "assistant", "content": success_message})
+                        
+                        # Display success message
+                        with st.chat_message("assistant"):
+                            st.success("Event scheduled successfully!")
+                            st.write(success_message)
+                            st.write(f"🔗 [View Event]({result.get('link')})")
+                    else:
+                        error_message = f"❌ Failed to create event: {result.get('error')}"
+                        
+                        # Add assistant response to chat history
+                        st.session_state['messages'].append({"role": "assistant", "content": error_message})
+                        
+                        # Display error message
+                        with st.chat_message("assistant"):
+                            st.error(error_message)
+                
+                # Clear the pending event after handling
+                del st.session_state['pending_event']
+                st.rerun()
+                
+        with col2:
+            if st.button("❌ No, Ignore"):
+                # Add rejection message to chat history
+                rejection_message = "❌ Event creation canceled."
+                st.session_state['messages'].append({"role": "assistant", "content": rejection_message})
+                
+                # Display rejection message
+                with st.chat_message("assistant"):
+                    st.warning(rejection_message)
+                
+                # Clear the pending event
+                del st.session_state['pending_event']
+                st.rerun()
+    
     # Get transcribed text from voice if available
     transcribed_text = add_mic_to_chat_input()
-    print(f"Transcribed text: {transcribed_text}")
     
     # If we have new transcribed text, use it
     if transcribed_text and 'transcribed_text' in st.session_state and st.session_state.transcribed_text:
@@ -65,7 +134,8 @@ def main():
         # Otherwise get text input
         user_prompt = st.chat_input("Tell me about the event you want to schedule...")
     
-    if user_prompt:
+    # Only process new user input if there's no pending event
+    if user_prompt and 'pending_event' not in st.session_state:
         # Add user message to chat history
         st.session_state['messages'].append({"role": "user", "content": user_prompt})
         
@@ -107,9 +177,12 @@ Respond only with the JSON object and no additional text."""},
             response = query_groq(api_messages)
         
         if "error" in response:
-            st.error(f"Error: {response['error']}")
-            st.text("Debug Details:")
-            st.text(response.get("details", "No additional details available."))
+            error_message = f"Error: {response['error']}"
+            st.session_state['messages'].append({"role": "assistant", "content": error_message})
+            with st.chat_message("assistant"):
+                st.error(error_message)
+                st.text("Debug Details:")
+                st.text(response.get("details", "No additional details available."))
         else:
             # Extract the JSON content from the response
             assistant_content = response['choices'][0]['message']['content']
@@ -124,43 +197,26 @@ Respond only with the JSON object and no additional text."""},
                 
                 # Check if the LLM indicated incomplete time information
                 if event_json.get("error") == "incomplete_time_info":
-                    assistant_response = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
-                    st.session_state['messages'].append({"role": "assistant", "content": assistant_response})
+                    error_message = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
+                    st.session_state['messages'].append({"role": "assistant", "content": error_message})
                     with st.chat_message("assistant"):
-                        st.write(assistant_response)
+                        st.error(error_message)
                     return
                 
                 # Check if start time is missing
                 if not event_json.get('start', {}).get('dateTime'):
-                    assistant_response = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
-                    st.session_state['messages'].append({"role": "assistant", "content": assistant_response})
+                    error_message = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
+                    st.session_state['messages'].append({"role": "assistant", "content": error_message})
                     with st.chat_message("assistant"):
-                        st.write(assistant_response)
+                        st.error(error_message)
                     return
                 
-                # Create the event in Google Calendar
-                result = create_calendar_event(calendar_service, event_json)
+                # Store the event in session state for confirmation
+                st.session_state['pending_event'] = event_json
                 
-                # Prepare the response to show the user
-                if result.get("success"):
-                    event_details = f"""
-                    ✅ Event created successfully!
-                    
-                    📌 Title: {event_json.get('summary')}
-                    🕒 When: {event_json.get('start', {}).get('dateTime')} to {event_json.get('end', {}).get('dateTime')}
-                    📍 Where: {event_json.get('location', 'No location specified')}
-                    📝 Description: {event_json.get('description', 'No description')}
-                    🔗 Calendar Link: {result.get('link')}
-                    """
-                    
-                    if 'attendees' in event_json:
-                        attendees_list = ", ".join([attendee.get('email') for attendee in event_json.get('attendees', [])])
-                        event_details += f"\n👥 Attendees: {attendees_list}"
-                    
-                    assistant_response = event_details
-                else:
-                    assistant_response = f"❌ Failed to create event: {result.get('error')}"
-                    
+                # Rerun to show confirmation buttons
+                st.rerun()
+                
             except json.JSONDecodeError:
                 # If JSON parsing fails, try to extract JSON from the text
                 extracted_json = extract_json_from_text(assistant_content)
@@ -172,43 +228,30 @@ Respond only with the JSON object and no additional text."""},
                     
                     # Check if the LLM indicated incomplete time information
                     if extracted_json.get("error") == "incomplete_time_info":
-                        assistant_response = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
-                        st.session_state['messages'].append({"role": "assistant", "content": assistant_response})
+                        error_message = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
+                        st.session_state['messages'].append({"role": "assistant", "content": error_message})
                         with st.chat_message("assistant"):
-                            st.write(assistant_response)
+                            st.error(error_message)
                         return
                     
                     # Check if start time is missing
                     if not extracted_json.get('start', {}).get('dateTime'):
-                        assistant_response = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
-                        st.session_state['messages'].append({"role": "assistant", "content": assistant_response})
+                        error_message = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
+                        st.session_state['messages'].append({"role": "assistant", "content": error_message})
                         with st.chat_message("assistant"):
-                            st.write(assistant_response)
+                            st.error(error_message)
                         return
                     
-                    # Create the event
-                    result = create_calendar_event(calendar_service, extracted_json)
+                    # Store the event in session state for confirmation
+                    st.session_state['pending_event'] = extracted_json
                     
-                    if result.get("success"):
-                        assistant_response = f"""
-                        ✅ Event created successfully!
-                        
-                        📌 Title: {extracted_json.get('summary')}
-                        🕒 When: {extracted_json.get('start', {}).get('dateTime')} to {extracted_json.get('end', {}).get('dateTime')}
-                        📍 Where: {extracted_json.get('location', 'No location specified')}
-                        🔗 Calendar Link: {result.get('link')}
-                        """
-                    else:
-                        assistant_response = f"❌ Failed to create event: {result.get('error')}"
+                    # Rerun to show confirmation buttons
+                    st.rerun()
                 else:
-                    assistant_response = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
-            
-            # Add assistant response to chat history
-            st.session_state['messages'].append({"role": "assistant", "content": assistant_response})
-            
-            # Display assistant response
-            with st.chat_message("assistant"):
-                st.write(assistant_response)
+                    error_message = "❌ Not able to get the time or details are incomplete. Please provide more specific date and time information."
+                    st.session_state['messages'].append({"role": "assistant", "content": error_message})
+                    with st.chat_message("assistant"):
+                        st.error(error_message)
     
     # Add a button to list upcoming events
     if st.button("List Upcoming Events"):
