@@ -7,13 +7,19 @@ import re
 from typing import Dict, List, Any, Optional
 import json
 import time
+import pickle
+import streamlit as st
+import logging
 
-# Configure logging
+# Set up logging
+logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO)
+# # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
+# logger = logging.getLogger(__name__)
 # Suppress the oauth2client warning by setting a specific environment variable
 # This is a temporary fix until migrating fully away from file_cache
 os.environ['OAUTH_SKIP_CACHE_WARNING'] = '1'
@@ -25,37 +31,108 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # Google Calendar API Scope
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
 
 # Set default timezone to Indian Standard Time
 DEFAULT_TIMEZONE = "Asia/Kolkata"  # Indian Standard Time (IST)
 DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
 
+# def get_credentials():
+#     """Handles Google Calendar API credentials securely with improved error handling."""
+#     creds = None
+
+#     if os.path.exists("token.json"):
+#         try:
+#             creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+#         except Exception as e:
+#             logging.warning(f"❗ Corrupted token.json file detected: {str(e)}. Deleting and re-authenticating...")
+#             os.remove("token.json")  # Delete the corrupted token file
+
+#     if not creds or not creds.valid:
+#         if creds and creds.expired and creds.refresh_token:
+#             try:
+#                 creds.refresh(Request())
+#             except Exception as e:
+#                 logging.warning(f"❗ Token refresh failed: {str(e)}. Re-authenticating from scratch...")
+#                 if os.path.exists("token.json"):
+#                     os.remove("token.json")  # Delete the corrupted token file
+#                 return get_credentials()  # Restart credential fetching
+#         else:
+#             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+#             creds = flow.run_local_server(port=0)
+#         with open("token.json", "w") as token:
+#             token.write(creds.to_json())
+
+#     return creds
 def get_credentials():
-    """Handles Google Calendar API credentials securely with improved error handling."""
+    """
+    Gets valid credentials for the Google Calendar API.
+
+    Priority order:
+    1. Streamlit secrets (deployed apps)
+    2. Environment variables
+    3. Local token.json file (if exists)
+    4. Local credentials.json file (fallback)
+
+    Returns:
+        Google OAuth2 credentials object
+    """
     creds = None
 
-    if os.path.exists("token.json"):
-        try:
-            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-        except Exception as e:
-            logging.warning(f"❗ Corrupted token.json file detected: {str(e)}. Deleting and re-authenticating...")
-            os.remove("token.json")  # Delete the corrupted token file
+    # 1️⃣ **Use token from session_state (if available)**
+    if "token" in st.session_state:
+        logger.info("Using token from session state")
+        creds = Credentials.from_authorized_user_info(st.session_state["token"], SCOPES)
 
+    # 2️⃣ **Use token.json (if exists)**
+    elif os.path.exists("token.json"):
+        logger.info("Loading credentials from token.json")
+        with open("token.json", "r") as token:
+            creds = Credentials.from_authorized_user_info(json.load(token), SCOPES)
+
+    # If credentials don't exist or are invalid
     if not creds or not creds.valid:
+        # Refresh if possible
         if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                logging.warning(f"❗ Token refresh failed: {str(e)}. Re-authenticating from scratch...")
-                if os.path.exists("token.json"):
-                    os.remove("token.json")  # Delete the corrupted token file
-                return get_credentials()  # Restart credential fetching
+            logger.info("Refreshing expired credentials")
+            creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
+            try:
+                # 3️⃣ **Streamlit secrets (recommended for deployment)**
+                if "google_credentials" in st.secrets:
+                    logger.info("Loading credentials from Streamlit secrets")
+                    client_config = json.loads(st.secrets["google_credentials"])  # Ensure it's parsed correctly
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                    creds = flow.run_local_server(port=0)
+
+                # 4️⃣ **Environment variable (alternative approach)**
+                elif "GOOGLE_CREDENTIALS" in os.environ:
+                    logger.info("Loading credentials from environment variable")
+                    client_config = json.loads(os.environ["GOOGLE_CREDENTIALS"])
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                    creds = flow.run_local_server(port=0)
+
+                # 5️⃣ **Local credentials.json file (fallback)**
+                elif os.path.exists("credentials.json"):
+                    logger.info("Loading credentials from credentials.json file")
+                    flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+                    creds = flow.run_local_server(port=0)
+                
+                else:
+                    error_msg = "No credentials found! Please set up credentials through Streamlit secrets or environment variables."
+                    logger.error(error_msg)
+                    raise FileNotFoundError(error_msg)
+
+            except Exception as e:
+                logger.error(f"Error during authentication: {str(e)}")
+                raise
+
+        # Save the credentials for future use
+        if creds:
+            st.session_state["token"] = json.loads(creds.to_json())
+            with open("token.json", "w") as token:
+                token.write(creds.to_json())
 
     return creds
 

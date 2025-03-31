@@ -5,11 +5,14 @@ import json
 import logging
 from datetime import datetime, timedelta
 import pytz
+import os
 from calendar_utils import get_calendar_service, create_calendar_event, list_upcoming_events
 from llm_utils import query_groq, extract_json_from_text
 
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Now attempt to import the required modules
 try:
@@ -33,7 +36,8 @@ def main():
         st.sidebar.success("✅ Connected to Google Calendar")
     except Exception as e:
         st.sidebar.error(f"Failed to connect to Google Calendar: {str(e)}")
-        st.error("Please make sure you have a valid credentials.json file in the same directory.")
+        st.error("Authentication failed. Please check your Google Calendar credentials.")
+        st.info("If you're running this locally, make sure to set up the required secrets or environment variables.")
         st.stop()
     
     # Initialize chat history in session state if it doesn't exist

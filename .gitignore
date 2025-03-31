@@ -4,14 +4,10 @@ __pycache__/
 #ignore DS_Store
 .DS_Store
 
-
-# ignore credentials
-credentials.json
-
 #ignore token
 token.json
+.env
 
-#ignore api keys
-api_keys.py
+
 
 
