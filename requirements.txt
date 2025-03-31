@@ -7,3 +7,6 @@ requests
 pytz
 groq
 python-dotenv
+pydub
+pyaudio
+sounddevice

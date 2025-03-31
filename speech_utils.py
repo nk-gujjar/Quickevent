@@ -1,106 +1,187 @@
 import streamlit as st
-import speech_recognition as sr
 import tempfile
 import os
 import logging
+import base64
+import sounddevice as sd
+import numpy as np
+import wave
+import threading
+import queue
+from dotenv import load_dotenv
+from groq import Groq  # Using the correct Groq API SDK
+
+# Load environment variables
+load_dotenv()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def record_and_transcribe():
-    """
-    Record audio using Streamlit's file uploader and transcribe it to text
-    using the SpeechRecognition library.
-    
-    Returns:
-        str: Transcribed text or error message
-    """
-    st.write("📢 Record your event details")
-    
-    # Create a file uploader for audio
-    audio_file = st.file_uploader("Upload audio file", type=["wav", "mp3", "m4a"])
-    
-    # Button to start recording
-    record_button = st.button("🎙️ Record Audio")
-    
-    if record_button:
-        # Display recording controls
-        with st.spinner("Recording... Press 'Stop' when finished"):
-            # Create a recognizer instance
-            recognizer = sr.Recognizer()
-            
-            # Use the microphone as source
-            try:
-                with sr.Microphone() as source:
-                    st.info("Recording started. Speak now...")
-                    # Adjust for ambient noise
-                    recognizer.adjust_for_ambient_noise(source)
-                    # Record audio
-                    audio_data = recognizer.listen(source, timeout=10)
-                    st.success("Recording complete!")
-                    
-                    # Save the audio file temporarily
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
-                        temp_audio.write(audio_data.get_wav_data())
-                        temp_audio_path = temp_audio.name
-                    
-                    # Transcribe the audio
-                    try:
-                        transcribed_text = recognizer.recognize_google(audio_data)
-                        st.success("Transcription complete!")
-                        return transcribed_text
-                    except sr.UnknownValueError:
-                        st.error("Could not understand the audio")
-                        return None
-                    except sr.RequestError as e:
-                        st.error(f"Could not request results from Google Speech Recognition service; {e}")
-                        return None
-                    finally:
-                        # Clean up the temporary file
-                        if os.path.exists(temp_audio_path):
-                            os.unlink(temp_audio_path)
-            except Exception as e:
-                st.error(f"Error recording audio: {str(e)}")
-                logger.error(f"Error recording audio: {str(e)}")
-                return None
-    
-    # Process uploaded audio file
-    if audio_file is not None:
-        st.audio(audio_file, format="audio/wav")
-        
-        # Save the uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
-            temp_audio.write(audio_file.read())
-            temp_audio_path = temp_audio.name
-        
+# Get API key from environment variables
+GROQ_API_KEY = os.getenv("GROQ_API_KEY_Whisper")
+
+# Ensure API key is set
+if not GROQ_API_KEY:
+    st.error("GROQ API key not found. Please set GROQ_API_KEY_Whisper in .env file.")
+
+# Initialize Groq client
+client = Groq(api_key=GROQ_API_KEY)
+
+# Global variables for recording
+audio_queue = queue.Queue()
+is_recording = False
+recording_thread = None
+recorded_file_path = None  # Store the recorded file path
+
+
+def audio_callback(indata, frames, time, status):
+    """Callback function for recording audio"""
+    if status:
+        print(status, file=sys.stderr)
+    audio_queue.put(indata.copy())
+
+
+def start_recording():
+    """Start recording audio in a separate thread"""
+    global is_recording, recording_thread, audio_queue, recorded_file_path
+
+    # Clear the queue
+    while not audio_queue.empty():
+        audio_queue.get()
+
+    is_recording = True
+
+    def record_audio():
+        """Record audio and save to a temporary file"""
+        print("Recording started...")
+        sample_rate = 16000
+        channels = 1
+
         try:
-            # Create a recognizer instance
-            recognizer = sr.Recognizer()
-            
-            # Load the audio file
-            with sr.AudioFile(temp_audio_path) as source:
-                # Read the audio data
-                audio_data = recognizer.record(source)
-                
-                # Transcribe the audio
-                try:
-                    transcribed_text = recognizer.recognize_google(audio_data)
-                    st.success("Transcription complete!")
-                    return transcribed_text
-                except sr.UnknownValueError:
-                    st.error("Could not understand the audio")
-                    return None
-                except sr.RequestError as e:
-                    st.error(f"Could not request results from Google Speech Recognition service; {e}")
-                    return None
+            with sd.InputStream(samplerate=sample_rate, channels=channels, callback=audio_callback):
+                # Create temporary file for saving the audio
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+                temp_filepath = temp_file.name
+                temp_file.close()
+
+                # Setup the WAV file
+                with wave.open(temp_filepath, 'wb') as wf:
+                    wf.setnchannels(channels)
+                    wf.setsampwidth(2)  # 16-bit audio
+                    wf.setframerate(sample_rate)
+
+                    print(f"Saving audio to {temp_filepath}")
+
+                    # Record until stopped
+                    while is_recording:
+                        try:
+                            data = audio_queue.get(timeout=0.1)
+                            wf.writeframes((data * 32767).astype(np.int16).tobytes())
+                        except queue.Empty:
+                            continue
+
+                # Save the file path for later access
+                global recorded_file_path
+                recorded_file_path = temp_filepath
+
         except Exception as e:
-            st.error(f"Error processing audio file: {str(e)}")
-            logger.error(f"Error processing audio file: {str(e)}")
-            return None
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(temp_audio_path):
-                os.unlink(temp_audio_path)
-    
+            logger.error(f"Error recording audio: {str(e)}")
+            print(f"Error recording audio: {str(e)}")
+            recorded_file_path = None
+
+    # Start recording in a separate thread
+    recording_thread = threading.Thread(target=record_audio)
+    recording_thread.start()
+
+
+def stop_recording():
+    """Stop the recording and return the path to the recorded file"""
+    global is_recording, recording_thread, recorded_file_path
+
+    if not is_recording:
+        return None
+
+    is_recording = False
+
+    # Wait for recording thread to finish
+    if recording_thread:
+        print("Stopping recording...")
+        recording_thread.join()
+        temp_filepath = recorded_file_path
+        recording_thread = None  # Reset thread variable
+
+        return temp_filepath
+
     return None
+
+
+def transcribe_with_groq(audio_file_path):
+    """
+    Transcribe audio using Groq's Whisper API
+    
+    Args:
+        audio_file_path (str): Path to the audio file
+        
+    Returns:
+        str: Transcribed text
+    """
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY_Whisper not found in environment variables")
+
+    try:
+        with open(audio_file_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(audio_file_path, file.read()),
+                model="whisper-large-v3",
+                response_format="verbose_json"
+            )
+
+            print(f"Transcription received: {transcription.text}")
+            return transcription.text
+    except Exception as e:
+        logger.error(f"Error with Groq API: {str(e)}")
+        st.error(f"Error transcribing audio: {str(e)}")
+        return None
+
+
+
+def add_mic_to_chat_input():
+    """Add a microphone button to handle voice input."""
+    if 'recording' not in st.session_state:
+        st.session_state.recording = False
+        st.session_state.transcribed_text = None
+
+    # Display appropriate button based on the recording state
+    if not st.session_state.recording:
+        if st.button("🎙️ Start Recording"):
+            st.session_state.recording = True
+            start_recording()
+            st.rerun()
+    else:
+        if st.button("⏹️ Stop Recording"):
+            st.session_state.recording = False
+            temp_filepath = stop_recording()
+            if temp_filepath and os.path.exists(temp_filepath):
+                with st.spinner("Transcribing..."):
+                    transcribed_text = transcribe_with_groq(temp_filepath)
+
+                if transcribed_text:
+                    st.session_state.transcribed_text = transcribed_text
+                else:
+                    st.error("Failed to transcribe audio.")
+
+                os.unlink(temp_filepath)  # Clean up file
+            st.rerun()
+
+    # Display transcribed text if available
+    return st.session_state.get('transcribed_text')
+
+
+
+# Example usage in a Streamlit app
+if __name__ == '__main__':
+    st.title("🎤 AI Voice Transcription")
+    transcribed_text = add_mic_to_chat_input()
+    if transcribed_text:
+        st.write("📝 Transcribed Text:", transcribed_text)

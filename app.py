@@ -8,6 +8,7 @@ import pytz
 import os
 from calendar_utils import get_calendar_service, create_calendar_event, list_upcoming_events
 from llm_utils import query_groq, extract_json_from_text
+from speech_utils import add_mic_to_chat_input
 
 
 # Setup logging
@@ -51,8 +52,18 @@ def main():
         with st.chat_message(role):
             st.write(content)
     
-    # Get user input
-    user_prompt = st.chat_input("Tell me about the event you want to schedule...")
+    # Get transcribed text from voice if available
+    transcribed_text = add_mic_to_chat_input()
+    print(f"Transcribed text: {transcribed_text}")
+    
+    # If we have new transcribed text, use it
+    if transcribed_text and 'transcribed_text' in st.session_state and st.session_state.transcribed_text:
+        user_prompt = transcribed_text
+        # Clear the transcribed text so it's not used again
+        st.session_state.transcribed_text = None
+    else:
+        # Otherwise get text input
+        user_prompt = st.chat_input("Tell me about the event you want to schedule...")
     
     if user_prompt:
         # Add user message to chat history
