@@ -8,13 +8,17 @@ from typing import Dict, List, Any, Optional
 import json
 import time
 import pickle
+import streamlit as st
+import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
+# Set up logging
+logger = logging.getLogger(__name__)
+# # Configure logging
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(levelname)s - %(message)s'
+# )
+# logger = logging.getLogger(__name__)
 # Suppress the oauth2client warning by setting a specific environment variable
 # This is a temporary fix until migrating fully away from file_cache
 os.environ['OAUTH_SKIP_CACHE_WARNING'] = '1'
@@ -26,7 +30,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # Google Calendar API Scope
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
 
 # Set default timezone to Indian Standard Time
 DEFAULT_TIMEZONE = "Asia/Kolkata"  # Indian Standard Time (IST)
@@ -60,50 +65,69 @@ DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
 
 #     return creds
 def get_credentials():
-    """Handles Google Calendar API credentials securely with improved error handling."""
-    creds = None
-
-    # Check if token.json exists
-    if os.path.exists("token.json"):
-        try:
-            # Load credentials from token file
-            with open("token.json", "rb") as token:
-                creds = pickle.load(token)
-            logging.info("Loaded credentials from token.json")
-        except Exception as e:
-            logging.warning(f"Error loading token.json: {e}")
-            os.remove("token.json")  # Delete corrupted token file
+    """
+    Gets valid credentials for the Google Calendar API.
     
-    # Authenticate user if credentials are missing or expired
+    This function handles credentials in the following priority:
+    1. Streamlit secrets (preferred for deployed apps)
+    2. Environment variables
+    3. Local credentials.json file (as a fallback)
+    
+    Returns:
+        Google OAuth2 credentials object
+    """
+    creds = None
+    
+    # Check if token exists in session state
+    if 'token' in st.session_state:
+        logger.info("Using token from session state")
+        creds = Credentials.from_authorized_user_info(st.session_state['token'], SCOPES)
+    
+    # Check if token.json exists
+    elif os.path.exists('token.json'):
+        logger.info("Loading credentials from token.json")
+        with open('token.json', 'r') as token:
+            creds = Credentials.from_authorized_user_info(json.load(token), SCOPES)
+    
+    # If credentials don't exist or are invalid
     if not creds or not creds.valid:
+        # Try to refresh if possible
         if creds and creds.expired and creds.refresh_token:
-            try:
-                logging.info("Refreshing expired credentials")
-                creds.refresh(Request())
-            except Exception as e:
-                logging.warning(f"Error refreshing credentials: {e}")
-                if os.path.exists("token.json"):
-                    os.remove("token.json")
+            logger.info("Refreshing expired credentials")
+            creds.refresh(Request())
         else:
+            # First, check if we have credentials in Streamlit secrets
             try:
-                logging.info("Starting OAuth flow for new credentials")
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    "credentials.json", SCOPES
-                )
-                # Run local server to get user authorization
-                creds = flow.run_local_server(port=0)
-                logging.info("Successfully obtained new credentials")
+                if 'google_credentials' in st.secrets:
+                    logger.info("Loading credentials from Streamlit secrets")
+                    client_config = st.secrets['google_credentials']
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                # Then, check environment variables
+                elif 'GOOGLE_CREDENTIALS' in os.environ:
+                    logger.info("Loading credentials from environment variable")
+                    client_config = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                # Finally, try the local file as a fallback
+                elif os.path.exists('credentials.json'):
+                    logger.info("Loading credentials from credentials.json file")
+                    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                    creds = flow.run_local_server(port=0)
+                else:
+                    error_msg = "No credentials found! Please set up credentials through Streamlit secrets or environment variables."
+                    logger.error(error_msg)
+                    raise FileNotFoundError(error_msg)
             except Exception as e:
-                logging.error(f"Error during OAuth flow: {e}")
+                logger.error(f"Error during authentication: {str(e)}")
                 raise
         
-        # Save the credentials for future use
-        try:
-            with open("token.json", "wb") as token:
-                pickle.dump(creds, token)
-            logging.info("Saved credentials to token.json")
-        except Exception as e:
-            logging.error(f"Error saving credentials: {e}")
+        # Save the credentials for the next run
+        if creds:
+            st.session_state['token'] = json.loads(creds.to_json())
+            # Also save to token.json for persistence
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
     
     return creds
 
