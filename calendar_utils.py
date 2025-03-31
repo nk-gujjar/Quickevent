@@ -60,35 +60,51 @@ DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
 
 #     return creds
 def get_credentials():
+    """Handles Google Calendar API credentials securely with improved error handling."""
     creds = None
 
     # Check if token.json exists
     if os.path.exists("token.json"):
         try:
+            # Load credentials from token file
             with open("token.json", "rb") as token:
                 creds = pickle.load(token)
+            logging.info("Loaded credentials from token.json")
         except Exception as e:
-            print(f"Error loading token.json: {e}")
+            logging.warning(f"Error loading token.json: {e}")
             os.remove("token.json")  # Delete corrupted token file
-
+    
     # Authenticate user if credentials are missing or expired
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                logging.info("Refreshing expired credentials")
+                creds.refresh(Request())
+            except Exception as e:
+                logging.warning(f"Error refreshing credentials: {e}")
+                if os.path.exists("token.json"):
+                    os.remove("token.json")
         else:
             try:
+                logging.info("Starting OAuth flow for new credentials")
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    "credentials.json", ["https://www.googleapis.com/auth/calendar"]
+                    "credentials.json", SCOPES
                 )
+                # Run local server to get user authorization
                 creds = flow.run_local_server(port=0)
-
-                # Save new token.json
-                with open("token.json", "wb") as token:
-                    pickle.dump(creds, token)
+                logging.info("Successfully obtained new credentials")
             except Exception as e:
-                print(f"Error during OAuth flow: {e}")
+                logging.error(f"Error during OAuth flow: {e}")
                 raise
-
+        
+        # Save the credentials for future use
+        try:
+            with open("token.json", "wb") as token:
+                pickle.dump(creds, token)
+            logging.info("Saved credentials to token.json")
+        except Exception as e:
+            logging.error(f"Error saving credentials: {e}")
+    
     return creds
 
 def get_calendar_service():
