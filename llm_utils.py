@@ -4,10 +4,18 @@ import json
 import re
 import logging
 from typing import Dict, List, Any, Optional
-import api_keys
+import os
+# import api_keys
+
 
 # Groq API Configuration
-GROQ_API_KEY = api_keys.GROQ_API_KEY
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_HEADERS = {
     "Authorization": f"Bearer {GROQ_API_KEY}",
