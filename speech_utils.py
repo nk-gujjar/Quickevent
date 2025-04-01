@@ -9,7 +9,7 @@ import wave
 import threading
 import queue
 from dotenv import load_dotenv
-from groq import Groq  # Using the correct Groq API SDK
+from groq import Groq  
 
 # Load environment variables
 load_dotenv()
@@ -19,11 +19,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Get API key from environment variables
-GROQ_API_KEY = os.getenv("GROQ_API_KEY_Whisper")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Ensure API key is set
 if not GROQ_API_KEY:
-    st.error("GROQ API key not found. Please set GROQ_API_KEY_Whisper in .env file.")
+    st.error("GROQ API key not found. Please set GROQ_API_KEY in .env file.")
 
 # Initialize Groq client
 client = Groq(api_key=GROQ_API_KEY)
