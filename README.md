@@ -1,9 +1,16 @@
 
-
 # QuickEvent - Chatbot Event Scheduler
 
 ## Description
 QuickEvent is a chatbot application that allows users to schedule events in Google Calendar. It uses **Streamlit** for the frontend interface and integrates with **Groq API** for both chat and voice inputs. The chatbot processes user inputs and schedules events in Google Calendar. This project also uses **Groq API** for speech-to-text transcription and text-based interaction.
+
+## Demo Video
+
+
+https://github.com/user-attachments/assets/ddecc8d1-d226-4f2b-9a65-8b54a8e9e21c
+
+
+
 
 ## Features
 - **User-friendly interface** powered by **Streamlit**.
