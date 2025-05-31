@@ -7,7 +7,8 @@ __pycache__/
 #ignore token
 token.json
 .env
-
-
+Credentials.json
+other.txt
+secrets.toml
 
 
