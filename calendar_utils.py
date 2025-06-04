@@ -1,5 +1,4 @@
-# Description: Utility functions for interacting with Google Calendar API.
-
+# calendar_utils.py
 import os
 import datetime as dt
 import logging
@@ -13,12 +12,15 @@ import logging
 
 # Set up logging
 logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO)
+# # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
+# logger = logging.getLogger(__name__)
 # Suppress the oauth2client warning by setting a specific environment variable
+# This is a temporary fix until migrating fully away from file_cache
 os.environ['OAUTH_SKIP_CACHE_WARNING'] = '1'
 
 from google.auth.transport.requests import Request
@@ -30,6 +32,7 @@ from googleapiclient.errors import HttpError
 # Google Calendar API Scope
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
+
 # Set default timezone to Indian Standard Time
 DEFAULT_TIMEZONE = "Asia/Kolkata"  # Indian Standard Time (IST)
 DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
@@ -38,117 +41,73 @@ DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
 def get_credentials():
     """
     Gets valid credentials for the Google Calendar API.
-    
-    For deployment, prioritizes Streamlit secrets over local files.
+
+    Priority order:
+    1. Streamlit secrets (deployed apps)
+    2. Environment variables
+    3. Local token.json file (if exists)
+    4. Local credentials.json file (fallback)
+
+    Returns:
+        Google OAuth2 credentials object
     """
     creds = None
 
     # 1️⃣ **Use token from session_state (if available)**
     if "token" in st.session_state:
         logger.info("Using token from session state")
-        try:
-            creds = Credentials.from_authorized_user_info(st.session_state["token"], SCOPES)
-        except Exception as e:
-            logger.warning(f"Failed to load credentials from session state: {e}")
-            # Clear invalid token from session state
-            del st.session_state["token"]
+        creds = Credentials.from_authorized_user_info(st.session_state["token"], SCOPES)
+
+    # 2️⃣ **Use token.json (if exists)**
+    elif os.path.exists("token.json"):
+        logger.info("Loading credentials from token.json")
+        with open("token.json", "r") as token:
+            creds = Credentials.from_authorized_user_info(json.load(token), SCOPES)
 
     # If credentials don't exist or are invalid
     if not creds or not creds.valid:
-        # Try to refresh if possible
+        # Refresh if possible
         if creds and creds.expired and creds.refresh_token:
+            logger.info("Refreshing expired credentials")
+            creds.refresh(Request())
+        else:
             try:
-                logger.info("Refreshing expired credentials")
-                creds.refresh(Request())
-                # Update session state with refreshed token
-                st.session_state["token"] = json.loads(creds.to_json())
-            except Exception as e:
-                logger.warning(f"Failed to refresh credentials: {e}")
-                creds = None
-        
-        # If still no valid credentials, authenticate
-        if not creds or not creds.valid:
-            try:
-                # 2️⃣ **Streamlit secrets (PREFERRED for deployment)**
+                # 3️⃣ **Streamlit secrets (recommended for deployment)**
                 if "google_credentials" in st.secrets:
                     logger.info("Loading credentials from Streamlit secrets")
-                    client_config = st.secrets["google_credentials"]
-                    
-                    # Handle both string and dict format
-                    if isinstance(client_config, str):
-                        client_config = json.loads(client_config)
-                    
-                    # For deployment, we need to use a different flow
-                    # that doesn't require local server
-                    if st.secrets.get("deployment_mode", False):
-                        # Use service account or pre-authorized tokens for production
-                        if "google_token" in st.secrets:
-                            token_info = st.secrets["google_token"]
-                            if isinstance(token_info, str):
-                                token_info = json.loads(token_info)
-                            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
-                        else:
-                            st.error("⚠️ For deployment, you need to set up 'google_token' in secrets. See deployment instructions.")
-                            st.stop()
-                    else:
-                        # Local development mode
-                        flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                        creds = flow.run_local_server(port=0)
+                    client_config = json.loads(st.secrets["google_credentials"])  # Ensure it's parsed correctly
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                    creds = flow.run_local_server(port=0)
 
-                # 3️⃣ **Environment variable (alternative approach)**
+                # 4️⃣ **Environment variable (alternative approach)**
                 elif "GOOGLE_CREDENTIALS" in os.environ:
                     logger.info("Loading credentials from environment variable")
                     client_config = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-                    
-                    if os.environ.get("DEPLOYMENT_MODE", "false").lower() == "true":
-                        # Production mode - expect pre-authorized token
-                        if "GOOGLE_TOKEN" in os.environ:
-                            token_info = json.loads(os.environ["GOOGLE_TOKEN"])
-                            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
-                        else:
-                            raise ValueError("GOOGLE_TOKEN environment variable required for deployment")
-                    else:
-                        # Local development
-                        flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                        creds = flow.run_local_server(port=0)
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                    creds = flow.run_local_server(port=0)
 
-                # 4️⃣ **Local credentials.json file (development only)**
+                # 5️⃣ **Local credentials.json file (fallback)**
                 elif os.path.exists("credentials.json"):
                     logger.info("Loading credentials from credentials.json file")
                     flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
                     creds = flow.run_local_server(port=0)
                 
                 else:
-                    error_msg = """
-                    🚨 No credentials found! 
-                    
-                    For deployment, set up Streamlit secrets with:
-                    - google_credentials: Your OAuth client configuration
-                    - google_token: Pre-authorized token (see setup instructions)
-                    - deployment_mode: true
-                    """
+                    error_msg = "No credentials found! Please set up credentials through Streamlit secrets or environment variables."
                     logger.error(error_msg)
-                    st.error(error_msg)
-                    st.stop()
+                    raise FileNotFoundError(error_msg)
 
             except Exception as e:
                 logger.error(f"Error during authentication: {str(e)}")
-                st.error(f"Authentication error: {str(e)}")
-                st.stop()
+                raise
 
-        # Save valid credentials for future use
-        if creds and creds.valid:
-            try:
-                st.session_state["token"] = json.loads(creds.to_json())
-                # Only save to file in development mode
-                if not st.secrets.get("deployment_mode", False):
-                    with open("token.json", "w") as token:
-                        token.write(creds.to_json())
-            except Exception as e:
-                logger.warning(f"Failed to save credentials: {e}")
+        # Save the credentials for future use
+        if creds:
+            st.session_state["token"] = json.loads(creds.to_json())
+            with open("token.json", "w") as token:
+                token.write(creds.to_json())
 
     return creds
-
 
 def get_calendar_service():
     """Build and return the Google Calendar API service with retry logic."""
@@ -167,164 +126,7 @@ def get_calendar_service():
                 raise
             else:
                 logging.warning(f"Attempt {retry_count} failed to build Calendar service: {str(e)}. Retrying...")
-                time.sleep(1)
-
-
-# # Description: Utility functions for interacting with Google Calendar API.
-
-# import os
-# import datetime as dt
-# import logging
-# import re
-# from typing import Dict, List, Any, Optional
-# import json
-# import time
-# import pickle
-# import streamlit as st
-# import logging
-
-# # Set up logging
-# logger = logging.getLogger(__name__)
-# # logging.basicConfig(level=logging.INFO)
-# # # Configure logging
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format='%(asctime)s - %(levelname)s - %(message)s'
-# )
-# # logger = logging.getLogger(__name__)
-# # Suppress the oauth2client warning by setting a specific environment variable
-# # This is a temporary fix until migrating fully away from file_cache
-# os.environ['OAUTH_SKIP_CACHE_WARNING'] = '1'
-
-# from google.auth.transport.requests import Request
-# from google.oauth2.credentials import Credentials
-# from google_auth_oauthlib.flow import InstalledAppFlow
-# from googleapiclient.discovery import build
-# from googleapiclient.errors import HttpError
-
-# # Google Calendar API Scope
-# SCOPES = ['https://www.googleapis.com/auth/calendar']
-
-
-# # Set default timezone to Indian Standard Time
-# DEFAULT_TIMEZONE = "Asia/Kolkata"  # Indian Standard Time (IST)
-# DEFAULT_TIMEZONE_OFFSET = "+05:30"  # UTC+5:30 for India
-
-
-# def get_credentials():
-#     """
-#     Gets valid credentials for the Google Calendar API.
-
-#     Priority order:
-#     1. Streamlit secrets (deployed apps)
-#     2. Environment variables
-#     3. Local token.json file (if exists)
-#     4. Local credentials.json file (fallback)
-
-#     Returns:
-#         Google OAuth2 credentials object
-#     """
-#     creds = None
-
-#     # 1️⃣ **Use token from session_state (if available)**
-#     if "token" in st.session_state:
-#         logger.info("Using token from session state")
-#         creds = Credentials.from_authorized_user_info(st.session_state["token"], SCOPES)
-
-#     # 2️⃣ **Use token.json (if exists)**
-#     elif os.path.exists("token.json"):
-#         logger.info("Loading credentials from token.json")
-#         with open("token.json", "r") as token:
-#             creds = Credentials.from_authorized_user_info(json.load(token), SCOPES)
-
-#     # If credentials don't exist or are invalid
-#     if not creds or not creds.valid:
-#         # Refresh if possible
-#         if creds and creds.expired and creds.refresh_token:
-#             logger.info("Refreshing expired credentials")
-#             creds.refresh(Request())
-#         else:
-#             try:
-#                 # 3️⃣ **Streamlit secrets (recommended for deployment)**
-#                 if "google_credentials" in st.secrets:
-#                     logger.info("Loading credentials from Streamlit secrets")
-#                     client_config = json.loads(st.secrets["google_credentials"])  # Ensure it's parsed correctly
-#                     flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-#                     creds = flow.run_local_server(port=0)
-
-#                 # 4️⃣ **Environment variable (alternative approach)**
-#                 elif "GOOGLE_CREDENTIALS" in os.environ:
-#                     logger.info("Loading credentials from environment variable")
-#                     client_config = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-#                     flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-#                     creds = flow.run_local_server(port=0)
-# #                     creds = flow.run_local_server(port=8080)
-# #                     flow = InstalledAppFlow.from_client_secrets_file(
-# #     'credentials.json',
-# #     scopes=['https://www.googleapis.com/auth/calendar']
-# # )
-
-# #                     # Force Google to show consent screen and issue refresh_token
-# #                     creds = flow.run_local_server(
-# #     port=8080,
-# #     authorization_prompt_message='',
-# #     success_message='Authorization complete. You may close this window.',
-# #     open_browser=True
-# # )
-
-
-#                 # 5️⃣ **Local credentials.json file (fallback)**
-#                 elif os.path.exists("credentials.json"):
-#                     logger.info("Loading credentials from credentials.json file")
-#                     flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-#                     creds = flow.run_local_server(port=0)
-#                     # flow = InstalledAppFlow.from_client_secrets_file(
-#                     #     "credentials.json",
-#                     #     scopes=['https://www.googleapis.com/auth/calendar']
-#                     # )
-#                     # # Force Google to show consent screen and issue refresh_token
-#                     # creds = flow.run_local_server(
-#                     #     port=8080,
-#                     #     authorization_prompt_message='',
-#                     #     success_message='Authorization complete. You may close this window.',
-#                     #     open_browser=True
-#                     # )
-                
-#                 else:
-#                     error_msg = "No credentials found! Please set up credentials through Streamlit secrets or environment variables."
-#                     logger.error(error_msg)
-#                     raise FileNotFoundError(error_msg)
-
-#             except Exception as e:
-#                 logger.error(f"Error during authentication: {str(e)}")
-#                 raise
-
-#         # Save the credentials for future use
-#         if creds:
-#             st.session_state["token"] = json.loads(creds.to_json())
-#             with open("token.json", "w") as token:
-#                 token.write(creds.to_json())
-
-#     return creds
-
-# def get_calendar_service():
-#     """Build and return the Google Calendar API service with retry logic."""
-#     max_retries = 3
-#     retry_count = 0
-    
-#     while retry_count < max_retries:
-#         try:
-#             creds = get_credentials()
-#             service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-#             return service
-#         except Exception as e:
-#             retry_count += 1
-#             if retry_count >= max_retries:
-#                 logging.error(f"Failed to build Calendar service after {max_retries} attempts: {str(e)}")
-#                 raise
-#             else:
-#                 logging.warning(f"Attempt {retry_count} failed to build Calendar service: {str(e)}. Retrying...")
-#                 time.sleep(1)  # Wait before retrying
+                time.sleep(1)  # Wait before retrying
 
 def parse_datetime(datetime_str: str) -> Optional[dt.datetime]:
     """
